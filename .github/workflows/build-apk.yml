@@ -1,66 +1,55 @@
 name: Build Android APK
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:  # 只允许手动触发，避免浪费资源
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90  # 增加超时时间
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
     
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    
-    - name: Cache Buildozer global directory
-      uses: actions/cache@v3
-      with:
-        path: .buildozer_global
-        key: buildozer-global-${{ hashFiles('buildozer.spec') }}
-    
-    - name: Cache Buildozer directory
-      uses: actions/cache@v3
-      with:
-        path: .buildozer
-        key: buildozer-${{ hashFiles('buildozer.spec') }}
-    
-    - name: Install dependencies
+    - name: Free up disk space
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          git \
-          zip \
-          unzip \
-          openjdk-17-jdk \
-          autoconf \
-          libtool \
-          pkg-config \
-          zlib1g-dev \
-          libncurses5-dev \
-          libncursesw5-dev \
-          cmake \
-          libffi-dev \
-          libssl-dev
-        pip install --upgrade pip
-        pip install buildozer cython
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        df -h
     
-    - name: Build APK
+    - name: Build APK with Buildozer Docker
       run: |
-        yes | buildozer android debug
-      timeout-minutes: 60
+        docker run --rm \
+          -v "$(pwd)":/home/user/hostcwd \
+          -e GRADLE_OPTS="-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2048m" \
+          kivy/buildozer android debug
+      timeout-minutes: 80
+    
+    - name: List build output
+      if: always()
+      run: |
+        echo "=== Checking bin directory ==="
+        ls -lah bin/ || echo "bin/ directory not found"
+        echo "=== Checking buildozer directory ==="
+        ls -lah .buildozer/ || echo ".buildozer/ directory not found"
     
     - name: Upload APK
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: photo-upload-apk
         path: bin/*.apk
         retention-days: 30
-        if-no-files-found: error
+        if-no-files-found: warn
+    
+    - name: Upload build logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: .buildozer/android/platform/build-*/
+        retention-days: 7
+        if-no-files-found: ignore
