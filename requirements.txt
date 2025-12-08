@@ -1,0 +1,17 @@
+# Photo Upload App Dependencies
+
+# UI Framework
+kivy>=2.0.0
+
+# Hardware access (camera, permissions)
+plyer>=2.0.0
+
+# HTTP requests
+requests>=2.25.0
+
+# Testing
+pytest>=7.0.0
+hypothesis>=6.0.0
+
+# Development
+python-dotenv>=0.19.0

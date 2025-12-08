@@ -1,0 +1,138 @@
+#:kivy 2.0
+
+<MainScreen>:
+    name: 'main'
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 20
+        spacing: 15
+        
+        # Header
+        Label:
+            text: '照片上传'
+            font_size: '24sp'
+            size_hint_y: 0.1
+            bold: True
+        
+        # Photo Preview Area
+        BoxLayout:
+            size_hint_y: 0.5
+            canvas.before:
+                Color:
+                    rgba: 0.9, 0.9, 0.9, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            
+            Image:
+                id: photo_preview
+                source: ''
+                allow_stretch: True
+                keep_ratio: True
+            
+            Label:
+                id: preview_placeholder
+                text: '点击下方按钮拍照'
+                color: 0.5, 0.5, 0.5, 1
+        
+        # Status Label
+        Label:
+            id: status_label
+            text: ''
+            size_hint_y: 0.1
+            color: 0, 0, 0, 1
+        
+        # Loading Indicator
+        BoxLayout:
+            size_hint_y: 0.05
+            ProgressBar:
+                id: loading_bar
+                max: 100
+                value: 0
+                opacity: 0
+        
+        # Action Buttons
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: 0.15
+            spacing: 10
+            
+            Button:
+                id: capture_btn
+                text: '拍照'
+                on_release: root.capture_photo()
+                background_color: 0.2, 0.6, 1, 1
+            
+            Button:
+                id: upload_btn
+                text: '上传'
+                on_release: root.upload_photo()
+                disabled: True
+                background_color: 0.2, 0.8, 0.2, 1
+        
+        # Settings Button
+        Button:
+            text: '设置'
+            size_hint_y: 0.1
+            on_release: app.root.current = 'settings'
+            background_color: 0.5, 0.5, 0.5, 1
+
+
+<SettingsScreen>:
+    name: 'settings'
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 20
+        spacing: 15
+        
+        # Header
+        Label:
+            text: '设置'
+            font_size: '24sp'
+            size_hint_y: 0.1
+            bold: True
+        
+        # API URL Input
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: 0.3
+            spacing: 5
+            
+            Label:
+                text: 'API 地址:'
+                size_hint_y: 0.3
+                halign: 'left'
+                text_size: self.size
+            
+            TextInput:
+                id: api_url_input
+                hint_text: '请输入 API 地址 (例如: https://api.example.com/upload)'
+                multiline: False
+                size_hint_y: 0.7
+        
+        # Validation Message
+        Label:
+            id: validation_label
+            text: ''
+            size_hint_y: 0.1
+            color: 1, 0, 0, 1
+        
+        # Spacer
+        Widget:
+            size_hint_y: 0.3
+        
+        # Action Buttons
+        BoxLayout:
+            orientation: 'horizontal'
+            size_hint_y: 0.1
+            spacing: 10
+            
+            Button:
+                text: '保存'
+                on_release: root.save_config()
+                background_color: 0.2, 0.8, 0.2, 1
+            
+            Button:
+                text: '返回'
+                on_release: app.root.current = 'main'
+                background_color: 0.5, 0.5, 0.5, 1
