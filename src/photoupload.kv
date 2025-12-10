@@ -4,19 +4,95 @@
     name: 'main'
     BoxLayout:
         orientation: 'vertical'
-        padding: 20
-        spacing: 15
+        padding: 15
+        spacing: 10
         
         # Header
-        Label:
-            text: '照片上传'
-            font_size: '24sp'
-            size_hint_y: 0.1
-            bold: True
-        
-        # Photo Preview Area
         BoxLayout:
-            size_hint_y: 0.5
+            size_hint_y: None
+            height: 60
+            spacing: 15
+            
+            Label:
+                text: 'PDA Sign-off'
+                font_size: '22sp'
+                size_hint_x: 0.5
+            
+            Button:
+                text: 'Settings'
+                size_hint_x: 0.5
+                font_size: '16sp'
+                on_release: app.root.current = 'settings'
+                background_color: 0.5, 0.5, 0.5, 1
+        
+        # Task List Header
+        BoxLayout:
+            size_hint_y: None
+            height: 50
+            spacing: 15
+            
+            Label:
+                text: 'Tasks'
+                font_size: '18sp'
+                size_hint_x: 0.4
+            
+            Button:
+                text: 'Refresh'
+                size_hint_x: 0.6
+                font_size: '16sp'
+                on_release: root.refresh_tasks()
+                background_color: 0.2, 0.6, 1, 1
+        
+        # Task List Container
+        BoxLayout:
+            size_hint_y: None
+            height: 180
+            canvas.before:
+                Color:
+                    rgba: 0.2, 0.2, 0.2, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            
+            ScrollView:
+                do_scroll_x: False
+                BoxLayout:
+                    id: task_container
+                    orientation: 'vertical'
+                    size_hint_y: None
+                    height: self.minimum_height
+                    spacing: 5
+                    padding: 5
+        
+        # Current Order Info
+        BoxLayout:
+            size_hint_y: None
+            height: 45
+            spacing: 20
+            
+            Label:
+                id: order_label
+                text: 'Order: None'
+                font_size: '16sp'
+                size_hint_x: 0.65
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.width, None
+                shorten: True
+                shorten_from: 'right'
+            
+            Label:
+                id: photo_count_label
+                text: 'Photos: 0'
+                font_size: '16sp'
+                size_hint_x: 0.35
+                halign: 'right'
+                valign: 'middle'
+                text_size: self.width, None
+        
+        # Photo Preview
+        BoxLayout:
+            size_hint_y: 0.35
             canvas.before:
                 Color:
                     rgba: 0.9, 0.9, 0.9, 1
@@ -29,110 +105,105 @@
                 source: ''
                 allow_stretch: True
                 keep_ratio: True
-            
-            Label:
-                id: preview_placeholder
-                text: '点击下方按钮拍照'
-                color: 0.5, 0.5, 0.5, 1
         
-        # Status Label
+        # Status
         Label:
             id: status_label
-            text: ''
-            size_hint_y: 0.1
-            color: 0, 0, 0, 1
+            text: 'Select a task'
+            font_size: '16sp'
+            size_hint_y: None
+            height: 35
+            color: 0.5, 0.5, 0.5, 1
         
-        # Loading Indicator
-        BoxLayout:
-            size_hint_y: 0.05
-            ProgressBar:
-                id: loading_bar
-                max: 100
-                value: 0
-                opacity: 0
+        # Loading
+        ProgressBar:
+            id: loading_bar
+            size_hint_y: None
+            height: 8
+            max: 100
+            value: 0
+            opacity: 0
         
         # Action Buttons
         BoxLayout:
-            orientation: 'horizontal'
-            size_hint_y: 0.15
-            spacing: 10
+            size_hint_y: None
+            height: 70
+            spacing: 15
             
             Button:
-                id: capture_btn
-                text: '拍照'
+                text: 'Capture'
                 on_release: root.capture_photo()
                 background_color: 0.2, 0.6, 1, 1
+                font_size: '20sp'
             
             Button:
-                id: upload_btn
-                text: '上传'
-                on_release: root.upload_photo()
-                disabled: True
+                text: 'Submit'
+                on_release: root.submit_sign()
                 background_color: 0.2, 0.8, 0.2, 1
-        
-        # Settings Button
-        Button:
-            text: '设置'
-            size_hint_y: 0.1
-            on_release: app.root.current = 'settings'
-            background_color: 0.5, 0.5, 0.5, 1
+                font_size: '20sp'
 
 
 <SettingsScreen>:
     name: 'settings'
     BoxLayout:
         orientation: 'vertical'
-        padding: 20
-        spacing: 15
+        padding: 25
+        spacing: 20
         
-        # Header
         Label:
-            text: '设置'
-            font_size: '24sp'
-            size_hint_y: 0.1
-            bold: True
+            text: 'Settings'
+            font_size: '26sp'
+            size_hint_y: None
+            height: 60
         
-        # API URL Input
-        BoxLayout:
-            orientation: 'vertical'
-            size_hint_y: 0.3
-            spacing: 5
-            
-            Label:
-                text: 'API 地址:'
-                size_hint_y: 0.3
-                halign: 'left'
-                text_size: self.size
-            
-            TextInput:
-                id: api_url_input
-                hint_text: '请输入 API 地址 (例如: https://api.example.com/upload)'
-                multiline: False
-                size_hint_y: 0.7
+        Label:
+            text: 'API URL:'
+            font_size: '18sp'
+            size_hint_y: None
+            height: 35
+            halign: 'left'
+            text_size: self.size
         
-        # Validation Message
+        TextInput:
+            id: api_url_input
+            hint_text: 'http://192.168.100.100:8099'
+            font_size: '16sp'
+            multiline: False
+            size_hint_y: None
+            height: 55
+        
         Label:
             id: validation_label
             text: ''
-            size_hint_y: 0.1
+            font_size: '16sp'
+            size_hint_y: None
+            height: 35
             color: 1, 0, 0, 1
         
-        # Spacer
         Widget:
-            size_hint_y: 0.3
+            size_hint_y: 0.2
         
-        # Action Buttons
+        Button:
+            text: 'Test Connection'
+            font_size: '18sp'
+            size_hint_y: None
+            height: 60
+            on_release: root.test_connection()
+            background_color: 0.2, 0.6, 1, 1
+        
         BoxLayout:
-            orientation: 'horizontal'
-            size_hint_y: 0.1
-            spacing: 10
+            size_hint_y: None
+            height: 60
+            spacing: 15
             
             Button:
-                text: '保存'
+                text: 'Save'
+                font_size: '18sp'
                 on_release: root.save_config()
                 background_color: 0.2, 0.8, 0.2, 1
             
             Button:
-                text: '返回'
+                text: 'Back'
+                font_size: '18sp'
                 on_release: app.root.current = 'main'
                 background_color: 0.5, 0.5, 0.5, 1

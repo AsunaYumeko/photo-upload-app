@@ -6,39 +6,69 @@ This is the entry point for the Kivy application.
 import os
 from kivy.app import App
 from kivy.uix.screenmanager import ScreenManager, Screen
-from kivy.properties import StringProperty, BooleanProperty
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.scrollview import ScrollView
+from kivy.properties import StringProperty, BooleanProperty, ListProperty
 from kivy.clock import Clock
 from kivy.lang import Builder
-
-from src.camera_module import CameraModule
-from src.image_converter import ImageConverter
-from src.upload_service import UploadService
-from src.config_storage import ConfigStorage
-from src.permission_manager import PermissionManager
-from src.models import AppConfig, PhotoData
+from camera_module import CameraModule
+from image_converter import ImageConverter
+from upload_service import UploadService
+from config_storage import ConfigStorage
+from permission_manager import PermissionManager
+from models import AppConfig, PhotoData
 
 
 # Get the directory where this file is located
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
-PHOTOS_DIR = os.path.join(APP_DIR, "photos")
+
+# Use app private directory for photos (works on Android)
+def get_photos_dir():
+    """Get photos directory that works on Android."""
+    try:
+        from android import mActivity
+        # Use app's external files directory on Android
+        context = mActivity.getApplicationContext()
+        files_dir = context.getExternalFilesDir(None)
+        if files_dir:
+            photos_dir = os.path.join(files_dir.getAbsolutePath(), 'photos')
+        else:
+            photos_dir = os.path.join(APP_DIR, "photos")
+    except ImportError:
+        # Not on Android, use local directory
+        photos_dir = os.path.join(APP_DIR, "photos")
+    
+    if not os.path.exists(photos_dir):
+        try:
+            os.makedirs(photos_dir)
+        except Exception:
+            pass
+    return photos_dir
+
+PHOTOS_DIR = get_photos_dir()
 
 # Load the KV file
 Builder.load_file(os.path.join(APP_DIR, "photoupload.kv"))
 
 
 class MainScreen(Screen):
-    """主屏幕，包含拍照和上传功能"""
+    """Main screen with task list and photo capture"""
     
     current_photo_path = StringProperty("")
     current_base64 = StringProperty("")
+    current_order_no = StringProperty("")
     is_uploading = BooleanProperty(False)
+    image_urls = ListProperty([])  # Store converted image URLs
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._camera = CameraModule(PHOTOS_DIR)
         self._upload_service = None
         self._config_storage = ConfigStorage(CONFIG_PATH)
+        self._tasks = []
     
     def on_enter(self):
         """Called when screen is displayed."""
@@ -50,19 +80,68 @@ class MainScreen(Screen):
         if config.api_url:
             self._upload_service = UploadService(config.api_url)
     
-    def capture_photo(self):
-        """触发拍照"""
-        if not self._camera.is_available():
-            self.show_notification("摄像头不可用，请检查权限设置", is_error=True)
+    def refresh_tasks(self):
+        """Refresh task list from server"""
+        if not self._upload_service:
+            self.show_notification("Configure API first", is_error=True)
             return
         
-        self.show_notification("正在打开摄像头...")
+        self.show_notification("Loading tasks...")
+        Clock.schedule_once(lambda dt: self._do_refresh_tasks(), 0.1)
+    
+    def _do_refresh_tasks(self):
+        """Perform task refresh"""
+        result = self._upload_service.get_tasks()
+        if result.success:
+            self._tasks = result.response_data.get("tasks", [])
+            self._update_task_list()
+            self.show_notification(f"Loaded {len(self._tasks)} tasks")
+        else:
+            self.show_notification(result.message, is_error=True)
+    
+    def _update_task_list(self):
+        """Update task list UI"""
+        task_container = self.ids.task_container
+        task_container.clear_widgets()
+        
+        for task in self._tasks:
+            btn = Button(
+                text=f"{task.get('orderNo', 'N/A')} - {task.get('lockerNo', '')}",
+                size_hint_y=None,
+                height=50
+            )
+            btn.bind(on_release=lambda x, t=task: self.select_task(t))
+            task_container.add_widget(btn)
+    
+    def select_task(self, task):
+        """Select a task for processing"""
+        self.current_order_no = task.get("orderNo", "")
+        self.image_urls = []  # Reset image list
+        self.ids.order_label.text = f"Order: {self.current_order_no}"
+        self.ids.photo_count_label.text = "Photos: 0"
+        self.show_notification(f"Selected: {self.current_order_no}")
+        
+        # Update status to processing
+        if self._upload_service:
+            self._upload_service.update_status(self.current_order_no)
+    
+    def capture_photo(self):
+        """Trigger photo capture"""
+        if not self.current_order_no:
+            self.show_notification("Select task first", is_error=True)
+            return
+        
+        if not self._camera.is_available():
+            self.show_notification("Camera unavailable", is_error=True)
+            return
+        
+        self.show_notification("Opening camera...")
         self._camera.capture(self._on_photo_captured)
     
     def _on_photo_captured(self, photo_path):
         """Callback when photo is captured."""
         if not photo_path:
-            self.show_notification("拍照失败，请重试", is_error=True)
+            self.show_notification("Capture failed", is_error=True)
             return
         
         self.current_photo_path = photo_path
@@ -72,54 +151,74 @@ class MainScreen(Screen):
         result = ImageConverter.encode_to_base64(photo_path)
         if result.success:
             self.current_base64 = result.value
-            self.ids.upload_btn.disabled = False
-            self.show_notification("照片已准备好上传")
+            self.show_notification("Converting...")
+            # Auto-convert to HTTP URL
+            Clock.schedule_once(lambda dt: self._convert_image(), 0.1)
         else:
-            self.show_notification(f"图片处理失败: {result.value}", is_error=True)
+            self.show_notification(f"Failed: {result.value}", is_error=True)
     
-    def upload_photo(self):
-        """触发上传"""
-        if not self.current_base64:
-            self.show_notification("请先拍照", is_error=True)
+    def _convert_image(self):
+        """Convert base64 image to HTTP URL via Swap API"""
+        if not self._upload_service:
+            self.show_notification("API not configured", is_error=True)
+            return
+        
+        result = self._upload_service.swap_image(self.current_base64)
+        if result.success:
+            image_url = result.response_data.get("ImageUrl")
+            if image_url:
+                self.image_urls.append(image_url)
+                self.ids.photo_count_label.text = f"Photos: {len(self.image_urls)}"
+                self.show_notification(f"Photo {len(self.image_urls)} ready")
+        else:
+            self.show_notification(result.message, is_error=True)
+    
+    def submit_sign(self):
+        """Submit all photos for sign-off"""
+        if not self.current_order_no:
+            self.show_notification("Select task first", is_error=True)
+            return
+        
+        if not self.image_urls:
+            self.show_notification("Take photo first", is_error=True)
             return
         
         if not self._upload_service:
-            self.show_notification("请先配置 API 地址", is_error=True)
+            self.show_notification("API not configured", is_error=True)
             return
         
         self.is_uploading = True
         self._show_loading(True)
-        self.show_notification("正在上传...")
-        
-        # Run upload in background
-        Clock.schedule_once(lambda dt: self._do_upload(), 0.1)
+        self.show_notification("Submitting...")
+        Clock.schedule_once(lambda dt: self._do_sign(), 0.1)
     
-    def _do_upload(self):
-        """Perform the actual upload."""
-        filename = os.path.basename(self.current_photo_path) if self.current_photo_path else "photo.jpg"
-        result = self._upload_service.upload_image(self.current_base64, filename)
+    def _do_sign(self):
+        """Perform sign-off"""
+        result = self._upload_service.sign_for(self.current_order_no, list(self.image_urls))
         
         self.is_uploading = False
         self._show_loading(False)
         
         if result.success:
-            self.show_notification("上传成功！", is_error=False)
-            # Reset state after successful upload
-            self.current_photo_path = ""
+            self.show_notification("Success!", is_error=False)
+            # Reset state
+            self.current_order_no = ""
             self.current_base64 = ""
-            self.ids.upload_btn.disabled = True
+            self.image_urls = []
+            self.ids.order_label.text = "Order: None"
+            self.ids.photo_count_label.text = "Photos: 0"
             self.ids.photo_preview.source = ""
-            self.ids.preview_placeholder.opacity = 1
+            # Refresh task list
+            self.refresh_tasks()
         else:
             self.show_notification(result.message, is_error=True)
     
     def show_preview(self, image_path: str):
-        """显示照片预览"""
+        """Show photo preview"""
         self.ids.photo_preview.source = image_path
-        self.ids.preview_placeholder.opacity = 0
     
     def show_notification(self, message: str, is_error: bool = False):
-        """显示通知消息"""
+        """Show notification message"""
         self.ids.status_label.text = message
         self.ids.status_label.color = (1, 0, 0, 1) if is_error else (0, 0.5, 0, 1)
     
@@ -127,12 +226,10 @@ class MainScreen(Screen):
         """Show or hide loading indicator."""
         self.ids.loading_bar.opacity = 1 if show else 0
         self.ids.loading_bar.value = 50 if show else 0
-        self.ids.capture_btn.disabled = show
-        self.ids.upload_btn.disabled = show
 
 
 class SettingsScreen(Screen):
-    """设置屏幕，配置 API 端点"""
+    """Settings screen for API configuration"""
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -143,52 +240,67 @@ class SettingsScreen(Screen):
         self.load_config()
     
     def load_config(self):
-        """加载当前配置"""
+        """Load current configuration"""
         config = self._config_storage.load()
         self.ids.api_url_input.text = config.api_url
         self.ids.validation_label.text = ""
     
     def save_config(self):
-        """保存配置"""
+        """Save configuration"""
         api_url = self.ids.api_url_input.text.strip()
         
-        # Validate URL if not empty
         if api_url and not ConfigStorage.validate_url(api_url):
-            self.ids.validation_label.text = "API 地址格式无效"
+            self.ids.validation_label.text = "Invalid URL"
             return False
         
         config = AppConfig(api_url=api_url)
         if self._config_storage.save(config):
-            self.ids.validation_label.text = ""
             self.ids.validation_label.color = (0, 0.5, 0, 1)
-            self.ids.validation_label.text = "保存成功"
+            self.ids.validation_label.text = "Saved"
             return True
         else:
-            self.ids.validation_label.text = "保存失败"
+            self.ids.validation_label.text = "Save failed"
             return False
+    
+    def test_connection(self):
+        """Test API connection"""
+        api_url = self.ids.api_url_input.text.strip()
+        if not api_url:
+            self.ids.validation_label.text = "Enter URL"
+            return
+        
+        self.ids.validation_label.text = "Testing..."
+        service = UploadService(api_url)
+        result = service.ping()
+        
+        if result.success:
+            self.ids.validation_label.color = (0, 0.5, 0, 1)
+            self.ids.validation_label.text = "Connected!"
+        else:
+            self.ids.validation_label.color = (1, 0, 0, 1)
+            self.ids.validation_label.text = result.message
 
 
 class PhotoUploadApp(App):
-    """主应用类"""
+    """Main application class"""
     
     def build(self):
-        """构建应用 UI"""
+        """Build application UI"""
         sm = ScreenManager()
         sm.add_widget(MainScreen(name='main'))
         sm.add_widget(SettingsScreen(name='settings'))
         return sm
     
     def on_start(self):
-        """应用启动时请求权限"""
+        """Request permissions on app start"""
         PermissionManager.request_all_permissions(self._on_permissions_result)
     
     def _on_permissions_result(self, granted: bool):
         """Handle permission request result."""
         if not granted:
-            # Show message about permissions
             main_screen = self.root.get_screen('main')
             main_screen.show_notification(
-                "需要摄像头和存储权限才能使用此应用",
+                "Permissions required",
                 is_error=True
             )
 

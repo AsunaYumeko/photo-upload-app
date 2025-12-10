@@ -7,9 +7,11 @@ from typing import Callable
 
 try:
     from android.permissions import request_permissions, check_permission, Permission
+    from android import api_version
     ANDROID_AVAILABLE = True
 except ImportError:
     ANDROID_AVAILABLE = False
+    api_version = 0
 
 
 class PermissionManager:
@@ -19,6 +21,22 @@ class PermissionManager:
     CAMERA = "android.permission.CAMERA"
     WRITE_STORAGE = "android.permission.WRITE_EXTERNAL_STORAGE"
     READ_STORAGE = "android.permission.READ_EXTERNAL_STORAGE"
+    READ_MEDIA_IMAGES = "android.permission.READ_MEDIA_IMAGES"
+    
+    @staticmethod
+    def _get_storage_permissions():
+        """Get appropriate storage permissions based on Android version."""
+        if not ANDROID_AVAILABLE:
+            return []
+        
+        # Android 13 (API 33) and above use READ_MEDIA_IMAGES
+        if api_version >= 33:
+            return [PermissionManager.READ_MEDIA_IMAGES]
+        else:
+            return [
+                Permission.WRITE_EXTERNAL_STORAGE,
+                Permission.READ_EXTERNAL_STORAGE
+            ]
     
     @staticmethod
     def request_camera_permission(callback: Callable[[bool], None]) -> None:
@@ -33,7 +51,7 @@ class PermissionManager:
             return
         
         def on_permissions_result(permissions, grants):
-            granted = all(grants)
+            granted = all(grants) if grants else False
             callback(granted)
         
         try:
@@ -41,7 +59,8 @@ class PermissionManager:
                 [Permission.CAMERA],
                 on_permissions_result
             )
-        except Exception:
+        except Exception as e:
+            print(f"Permission request error: {e}")
             callback(False)
     
     @staticmethod
@@ -57,15 +76,15 @@ class PermissionManager:
             return
         
         def on_permissions_result(permissions, grants):
-            granted = all(grants)
+            granted = all(grants) if grants else False
             callback(granted)
         
+        perms = PermissionManager._get_storage_permissions()
+        
         try:
-            request_permissions(
-                [Permission.WRITE_EXTERNAL_STORAGE, Permission.READ_EXTERNAL_STORAGE],
-                on_permissions_result
-            )
-        except Exception:
+            request_permissions(perms, on_permissions_result)
+        except Exception as e:
+            print(f"Permission request error: {e}")
             callback(False)
     
     @staticmethod
@@ -80,19 +99,17 @@ class PermissionManager:
             return
         
         def on_permissions_result(permissions, grants):
-            granted = all(grants)
+            granted = all(grants) if grants else False
             callback(granted)
         
+        # Build permission list based on Android version
+        perms = [Permission.CAMERA]
+        perms.extend(PermissionManager._get_storage_permissions())
+        
         try:
-            request_permissions(
-                [
-                    Permission.CAMERA,
-                    Permission.WRITE_EXTERNAL_STORAGE,
-                    Permission.READ_EXTERNAL_STORAGE
-                ],
-                on_permissions_result
-            )
-        except Exception:
+            request_permissions(perms, on_permissions_result)
+        except Exception as e:
+            print(f"Permission request error: {e}")
             callback(False)
     
     @staticmethod
@@ -121,9 +138,7 @@ class PermissionManager:
             return True
         
         try:
-            return (
-                check_permission(Permission.WRITE_EXTERNAL_STORAGE) and
-                check_permission(Permission.READ_EXTERNAL_STORAGE)
-            )
+            perms = PermissionManager._get_storage_permissions()
+            return all(check_permission(p) for p in perms)
         except Exception:
             return False

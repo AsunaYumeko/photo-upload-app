@@ -8,7 +8,7 @@ import os
 import re
 from typing import Optional
 
-from src.models import AppConfig
+from models import AppConfig
 
 
 class ConfigStorage:
@@ -63,9 +63,6 @@ class ConfigStorage:
     def validate_url(url: str) -> bool:
         """验证 URL 格式
         
-        Validates that the URL conforms to HTTP/HTTPS format with
-        scheme, host, optional port and path.
-        
         Args:
             url: URL string to validate.
             
@@ -75,8 +72,5 @@ class ConfigStorage:
         if not url or not isinstance(url, str):
             return False
         
-        # Pattern for HTTP/HTTPS URLs
-        # Matches: scheme://host[:port][/path]
-        pattern = r'^https?://[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*(\:[0-9]+)?(/.*)?$'
-        
-        return bool(re.match(pattern, url))
+        # Simple URL validation
+        return url.startswith("http://") or url.startswith("https://")
