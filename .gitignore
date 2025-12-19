@@ -185,3 +185,7 @@ cython_debug/
 bin/
 *.apk
 *.aab
+
+# Large font files
+src/fonts/*.ttc
+src/fonts/*.ttf

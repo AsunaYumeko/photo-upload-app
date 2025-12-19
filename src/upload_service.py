@@ -76,11 +76,12 @@ class UploadService:
         except Exception as e:
             return UploadResult(success=False, message=f"Error: {str(e)}")
     
-    def swap_image(self, base64_data: str) -> UploadResult:
+    def swap_image(self, base64_data: str, filename: str = None) -> UploadResult:
         """将Base64图片转换为HTTP链接
         
         Args:
             base64_data: Base64 encoded image data (without prefix)
+            filename: Optional custom filename (e.g. "ORDER001_1.jpg")
             
         Returns:
             UploadResult with ImageUrl on success
@@ -95,6 +96,10 @@ class UploadService:
                 "password": self.PASSWORD,
                 "imgUrl": base64_data
             }
+            
+            # Add filename if provided
+            if filename:
+                payload["filename"] = filename
             
             response = requests.post(
                 f"{self._base_url}/Image/Swap",

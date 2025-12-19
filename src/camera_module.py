@@ -1,6 +1,6 @@
 """Camera Module for Photo Upload App.
 
-This module handles camera operations using Plyer library.
+Uses Android camera Intent with thumbnail mode.
 """
 
 import os
@@ -9,31 +9,57 @@ from datetime import datetime
 from kivy.clock import Clock
 
 # Check if running on Android
+ANDROID_AVAILABLE = False
 try:
-    from android import mActivity
-    from android.permissions import request_permissions, check_permission, Permission
+    from jnius import autoclass, cast
+    from android import activity, mActivity
+    
+    # Java classes
+    Intent = autoclass('android.content.Intent')
+    MediaStore = autoclass('android.provider.MediaStore')
+    Environment = autoclass('android.os.Environment')
+    Bitmap = autoclass('android.graphics.Bitmap')
+    FileOutputStream = autoclass('java.io.FileOutputStream')
+    CompressFormat = autoclass('android.graphics.Bitmap$CompressFormat')
+    
     ANDROID_AVAILABLE = True
-except ImportError:
-    ANDROID_AVAILABLE = False
+except ImportError as e:
+    pass
+except Exception as e:
+    pass
 
-# Import plyer camera
+# Fallback for desktop
+PLYER_AVAILABLE = False
 try:
-    from plyer import camera
+    from plyer import camera as plyer_camera
     PLYER_AVAILABLE = True
 except ImportError:
-    PLYER_AVAILABLE = False
-    camera = None
+    pass
+
+
+REQUEST_CODE_CAMERA = 1001
 
 
 class CameraModule:
-    """Camera module - Handles camera capture operations."""
+    """Camera module using Android camera Intent."""
+    
+    _callback = None
+    _filepath = None
+    _bound = False
+    _last_error = ""
     
     def __init__(self, save_path: str):
         """Initialize with photo save path."""
         self._save_path = save_path
-        self._pending_callback = None
-        self._pending_filepath = None
         self._ensure_save_path_exists()
+        
+        # Bind activity result handler once
+        if ANDROID_AVAILABLE and not CameraModule._bound:
+            try:
+                activity.bind(on_activity_result=CameraModule._on_activity_result)
+                CameraModule._bound = True
+            except Exception as e:
+                CameraModule._last_error = f"Bind error: {e}"
     
     def _ensure_save_path_exists(self) -> None:
         """Ensure the save directory exists."""
@@ -41,129 +67,166 @@ class CameraModule:
             try:
                 if not os.path.exists(self._save_path):
                     os.makedirs(self._save_path)
-            except Exception as e:
-                print(f"Failed to create save path: {e}")
-                # Try alternative path on Android
-                if ANDROID_AVAILABLE:
-                    self._save_path = self._get_android_pictures_path()
-    
-    def _get_android_pictures_path(self) -> str:
-        """Get Android pictures directory."""
-        if ANDROID_AVAILABLE:
-            try:
-                from jnius import autoclass
-                Environment = autoclass('android.os.Environment')
-                pictures_dir = Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_PICTURES
-                ).getAbsolutePath()
-                app_dir = os.path.join(pictures_dir, 'PhotoUpload')
-                if not os.path.exists(app_dir):
-                    os.makedirs(app_dir)
-                return app_dir
-            except Exception as e:
-                print(f"Failed to get Android pictures path: {e}")
-        return self._save_path
+            except Exception:
+                pass
     
     def _generate_filename(self) -> str:
-        """Generate a unique filename based on timestamp."""
+        """Generate a unique filename."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return f"photo_{timestamp}.jpg"
     
     def capture(self, callback: Callable[[Optional[str]], None]) -> None:
-        """Capture photo and return path via callback."""
-        if not self.is_available():
-            print("Camera not available")
+        """Capture photo."""
+        CameraModule._last_error = ""
+        
+        if ANDROID_AVAILABLE:
+            self._capture_android(callback)
+        elif PLYER_AVAILABLE:
+            self._capture_plyer(callback)
+        else:
+            CameraModule._last_error = "No camera module"
             callback(None)
+    
+    def _capture_android(self, callback: Callable) -> None:
+        """Capture using Android camera Intent."""
+        try:
+            filename = self._generate_filename()
+            
+            # Get save directory
+            context = mActivity.getApplicationContext()
+            files_dir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+            
+            if files_dir is None:
+                files_dir = context.getExternalCacheDir()
+            
+            if files_dir is None:
+                CameraModule._last_error = "No storage"
+                callback(None)
+                return
+            
+            filepath = os.path.join(files_dir.getAbsolutePath(), filename)
+            
+            # Store for callback
+            CameraModule._callback = callback
+            CameraModule._filepath = filepath
+            
+            # Create camera intent - thumbnail mode (no EXTRA_OUTPUT)
+            intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            
+            # Check if camera app exists
+            pm = context.getPackageManager()
+            if intent.resolveActivity(pm) is None:
+                CameraModule._last_error = "No camera app"
+                callback(None)
+                return
+            
+            # Start camera activity
+            mActivity.startActivityForResult(intent, REQUEST_CODE_CAMERA)
+            
+        except Exception as e:
+            CameraModule._last_error = f"Launch error: {e}"
+            callback(None)
+    
+    def _capture_plyer(self, callback: Callable) -> None:
+        """Capture using plyer (desktop fallback)."""
+        try:
+            filename = self._generate_filename()
+            filepath = os.path.join(self._save_path, filename)
+            plyer_camera.take_picture(
+                filename=filepath,
+                on_complete=lambda p: callback(p if p else filepath)
+            )
+        except Exception as e:
+            CameraModule._last_error = str(e)
+            callback(None)
+    
+    @staticmethod
+    def _on_activity_result(request_code, result_code, intent):
+        """Handle camera result."""
+        if request_code != REQUEST_CODE_CAMERA:
             return
         
-        # Request permissions first on Android
-        if ANDROID_AVAILABLE:
-            self._request_permissions_and_capture(callback)
+        callback = CameraModule._callback
+        filepath = CameraModule._filepath
+        
+        # Clear
+        CameraModule._callback = None
+        CameraModule._filepath = None
+        
+        if callback is None:
+            return
+        
+        # -1 = RESULT_OK
+        if result_code == -1 and intent is not None:
+            try:
+                # Get thumbnail bitmap from intent extras
+                extras = intent.getExtras()
+                if extras is None:
+                    CameraModule._last_error = "No extras"
+                    Clock.schedule_once(lambda dt: callback(None), 0)
+                    return
+                
+                if not extras.containsKey("data"):
+                    CameraModule._last_error = "No data key"
+                    Clock.schedule_once(lambda dt: callback(None), 0)
+                    return
+                
+                # Method 1: Try direct getParcelable with Bitmap class
+                try:
+                    bitmap = extras.getParcelable("data")
+                    if bitmap is not None:
+                        # bitmap is already a Bitmap object
+                        fos = FileOutputStream(filepath)
+                        bitmap.compress(CompressFormat.JPEG, 90, fos)
+                        fos.flush()
+                        fos.close()
+                        
+                        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                            Clock.schedule_once(lambda dt, p=filepath: callback(p), 0)
+                            return
+                except Exception as e1:
+                    CameraModule._last_error = f"Method1: {e1}"
+                
+                # Method 2: Try get() and cast
+                try:
+                    obj = extras.get("data")
+                    if obj is not None:
+                        bitmap = cast('android.graphics.Bitmap', obj)
+                        fos = FileOutputStream(filepath)
+                        bitmap.compress(CompressFormat.JPEG, 90, fos)
+                        fos.flush()
+                        fos.close()
+                        
+                        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                            Clock.schedule_once(lambda dt, p=filepath: callback(p), 0)
+                            return
+                except Exception as e2:
+                    CameraModule._last_error = f"Method2: {e2}"
+                
+                CameraModule._last_error = "Failed to get bitmap"
+                
+            except Exception as e:
+                CameraModule._last_error = f"Result error: {e}"
+        elif result_code == 0:
+            CameraModule._last_error = "Cancelled"
         else:
-            self._do_capture(callback)
-    
-    def _request_permissions_and_capture(self, callback: Callable) -> None:
-        """Request camera permissions then capture."""
-        def on_permissions(permissions, grants):
-            if all(grants):
-                # Schedule capture on main thread
-                Clock.schedule_once(lambda dt: self._do_capture(callback), 0.1)
-            else:
-                print("Camera permission denied")
-                callback(None)
+            CameraModule._last_error = f"Code: {result_code}"
         
-        try:
-            request_permissions(
-                [Permission.CAMERA, Permission.WRITE_EXTERNAL_STORAGE],
-                on_permissions
-            )
-        except Exception as e:
-            print(f"Permission request error: {e}")
-            # Try capture anyway
-            self._do_capture(callback)
-    
-    def _do_capture(self, callback: Callable) -> None:
-        """Perform the actual capture."""
-        filename = self._generate_filename()
-        filepath = os.path.join(self._save_path, filename)
-        
-        self._pending_callback = callback
-        self._pending_filepath = filepath
-        
-        print(f"Capturing to: {filepath}")
-        
-        try:
-            camera.take_picture(
-                filename=filepath,
-                on_complete=self._on_capture_complete
-            )
-        except Exception as e:
-            print(f"Camera capture error: {e}")
-            callback(None)
-    
-    def _on_capture_complete(self, path: Optional[str]) -> None:
-        """Handle camera capture completion."""
-        callback = self._pending_callback
-        filepath = self._pending_filepath
-        
-        print(f"Capture complete, path: {path}, expected: {filepath}")
-        
-        if callback:
-            # Use returned path if available, otherwise use our filepath
-            result_path = path if path else filepath
-            
-            # Verify file exists
-            if result_path and os.path.exists(result_path):
-                print(f"Photo saved: {result_path}")
-                callback(result_path)
-            elif filepath and os.path.exists(filepath):
-                print(f"Using expected path: {filepath}")
-                callback(filepath)
-            else:
-                print("Photo file not found")
-                callback(None)
-            
-            # Clear pending
-            self._pending_callback = None
-            self._pending_filepath = None
+        Clock.schedule_once(lambda dt: callback(None), 0)
     
     def is_available(self) -> bool:
         """Check if camera is available."""
-        if not PLYER_AVAILABLE or camera is None:
-            return False
-        
-        try:
-            return hasattr(camera, 'take_picture')
-        except Exception:
-            return False
+        return ANDROID_AVAILABLE or PLYER_AVAILABLE
+    
+    def get_last_error(self) -> str:
+        """Get last error message."""
+        return CameraModule._last_error
     
     @property
     def save_path(self) -> str:
-        """Get current save path."""
         return self._save_path
     
     @save_path.setter
     def save_path(self, path: str) -> None:
-        """Set save path and ensure it exists."""
         self._save_path = path
         self._ensure_save_path_exists()
